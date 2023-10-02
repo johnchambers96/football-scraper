@@ -12,24 +12,10 @@ import (
 )
 
 func UploadImagesToS3(bucketName string, imagePaths []string, prefix string) error {
-	// Create a channel to communicate image upload status
-	statusChan := make(chan error)
-
-	// Launch a new Goroutine for each image upload
 	for _, imagePath := range imagePaths {
-		go func(imagePath string) {
-			// Upload the image to S3
-			err := UploadImage(bucketName, imagePath, prefix)
-			// Send the upload status to the status channel
-			statusChan <- err
-		}(imagePath)
-	}
-
-	// Wait for all uploads to complete and collect status
-	for range imagePaths {
-		err := <-statusChan
+		err := UploadImage(bucketName, imagePath, prefix)
 		if err != nil {
-			return err
+			panic(err)
 		}
 	}
 

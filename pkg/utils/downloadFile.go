@@ -15,6 +15,13 @@ func DownloadFile(filepath string, url string) error {
 	if err != nil {
 		return err
 	}
+
+	finalURL := resp.Request.URL.String()
+
+	if finalURL != url {
+		return nil
+	}
+
 	defer resp.Body.Close()
 
 	// Create the file

@@ -54,7 +54,7 @@ type LeagueNationData struct {
 }
 
 func main() {
-	godotenv.Load("../.env")
+	godotenv.Load("../../.env")
 
 	// Fetch data from EAFCp
 	data := fetchData()
@@ -70,17 +70,17 @@ func main() {
 	uploadTeamImages()
 
 	// Rename image paths
-	tmpData := updateImageNames(data)
+	updateImageNames(data)
 
 	// Insert nations data to mongo
-	insertNationData(tmpData.Nationality)
+	insertNationData(data.Nationality)
 	// Insert league data to mongo
-	insertLeagueData(tmpData.Leagues)
+	insertLeagueData(data.Leagues)
 	// Insert team data to mongo
-	insertTeamData(tmpData.Leagues)
+	insertTeamData(data.Leagues)
 
 	// Save data to file
-	saveDataToFile(tmpData)
+	saveDataToFile(data)
 
 	fmt.Println("finished")
 }
@@ -117,7 +117,7 @@ func saveDataToFile(data LeagueNationData) error {
 		fmt.Println(err)
 	}
 
-	err = os.WriteFile("../assets/data.json", content, 0644)
+	err = os.WriteFile("../../assets/data.json", content, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func downloadNationImages(nations []Nationality) error {
 	for i := range nations {
 
 		go func(nation Nationality) error {
-			err := downloadFile.DownloadFile("../assets/nations/"+strconv.Itoa(nation.Id)+".png", nation.ImageUrl)
+			err := downloadFile.DownloadFile("../../assets/nations/"+strconv.Itoa(nation.Id)+".png", nation.ImageUrl)
 			if err != nil {
 				fmt.Println("Error downloading file: ", err)
 				return nil
@@ -165,7 +165,7 @@ func downloadTeamsImages(leagues []Leagues) error {
 		for v := range leagues[i].Teams {
 
 			go func(team Teams) error {
-				err := downloadFile.DownloadFile("../assets/teams/"+strconv.Itoa(team.Id)+".png", team.ImageUrl)
+				err := downloadFile.DownloadFile("../../assets/teams/"+strconv.Itoa(team.Id)+".png", team.ImageUrl)
 
 				if err != nil {
 					fmt.Println("Error downloading file: ", err)
@@ -210,14 +210,14 @@ func updateImageNames(data LeagueNationData) LeagueNationData {
 }
 
 func uploadNationImages() error {
-	nationFiles, err := os.ReadDir("../assets/nations")
+	nationFiles, err := os.ReadDir("../../assets/nations")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	var filePaths []string
 	for _, file := range nationFiles {
-		filePaths = append(filePaths, "../assets/nations/"+file.Name())
+		filePaths = append(filePaths, "../../assets/nations/"+file.Name())
 	}
 
 	s3.UploadImagesToS3(os.Getenv("BUCKET_NAME"), filePaths, "nations/24/")
@@ -225,14 +225,14 @@ func uploadNationImages() error {
 }
 
 func uploadTeamImages() error {
-	teamFiles, err := os.ReadDir("../assets/teams")
+	teamFiles, err := os.ReadDir("../../assets/teams")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	var filePaths []string
 	for _, file := range teamFiles {
-		filePaths = append(filePaths, "../assets/teams/"+file.Name())
+		filePaths = append(filePaths, "../../assets/teams/"+file.Name())
 	}
 
 	s3.UploadImagesToS3(os.Getenv("BUCKET_NAME"), filePaths, "clubs/24/")
@@ -248,7 +248,7 @@ func insertNationData(nations []Nationality) error {
 
 	generic := make([]interface{}, 0)
 	for _, f := range nations {
-		generic = append(generic, f)
+		generic = append(generic, bson.M{"id": f.Id, "label": f.Label, "imgSrc": f.ImageUrl})
 	}
 
 	result, err := nationsCollection.InsertMany(context.TODO(), generic)
@@ -293,7 +293,7 @@ func insertTeamData(leagues []Leagues) error {
 	teamData := make([]interface{}, 0)
 	for _, league := range leagues {
 		for _, team := range league.Teams {
-			teamData = append(teamData, bson.M{"id": team.Id, "label": team.Label, "ImageUrl": team.ImageUrl, "leagueId": league.Id, "nationId": league.Region.Id})
+			teamData = append(teamData, bson.M{"id": team.Id, "label": team.Label, "imgSrc": team.ImageUrl, "leagueId": league.Id, "nationId": league.Region.Id})
 		}
 	}
 
