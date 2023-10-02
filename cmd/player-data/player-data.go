@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	mongoClient "football-data/pkg/mongo-client"
 	"football-data/pkg/s3"
 	downloadFile "football-data/pkg/utils"
 	"io"
@@ -17,7 +15,7 @@ import (
 	"github.com/gocolly/colly"
 	"github.com/gocolly/colly/extensions"
 	"github.com/joho/godotenv"
-	"go.mongodb.org/mongo-driver/bson"
+	supa "github.com/nedpals/supabase-go"
 )
 
 type Teams struct {
@@ -63,7 +61,6 @@ func main() {
 	// Update/insert player data to mongodb
 	insertPlayerData(players)
 
-	// fmt.Println(players)
 	saveDataToFile(players)
 	fmt.Println("Player data finished.")
 }
@@ -245,22 +242,33 @@ func updatePlayerData(players []Player) []Player {
 }
 
 func insertPlayerData(players []Player) error {
+	type PlayerSupa struct {
+		Id        int      `json:"id"`
+		ClubId    int      `json:"club_id"`
+		NationId  int      `json:"nation_id"`
+		ShortName string   `json:"short_name"`
+		KnownName string   `json:"known_name"`
+		Positions []string `json:"positions"`
+	}
 
-	client := mongoClient.CreateClient()
+	supabase := supa.CreateClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"))
 
-	playerCollection := client.Database("24").Collection("players")
-
-	generic := make([]interface{}, 0)
 	for _, player := range players {
-		generic = append(generic, bson.M{"id": player.Id, "shortName": player.ShortName, "knownName": player.KnownName, "imgSrc": player.ImageUrl, "nationId": player.NationId, "clubId": player.ClubId, "positions": player.Positions})
+		row := PlayerSupa{
+			Id:        player.Id,
+			ClubId:    player.ClubId,
+			NationId:  player.NationId,
+			ShortName: player.ShortName,
+			KnownName: player.KnownName,
+			Positions: player.Positions,
+		}
+		var results []PlayerSupa
+		err := supabase.DB.From("players").Upsert(row).Execute(&results)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(results)
 	}
 
-	result, err := playerCollection.InsertMany(context.TODO(), generic)
-
-	if err != nil {
-		panic(err)
-	}
-	// display the id of the newly inserted objects
-	fmt.Println(result)
 	return nil
 }
