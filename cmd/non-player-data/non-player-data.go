@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	mongoClient "football-data/pkg/mongo-client"
 	"football-data/pkg/s3"
 	downloadFile "football-data/pkg/utils"
 	"io"
@@ -14,7 +12,7 @@ import (
 	"strconv"
 
 	"github.com/joho/godotenv"
-	"go.mongodb.org/mongo-driver/bson"
+	supa "github.com/nedpals/supabase-go"
 )
 
 type Gender struct {
@@ -60,27 +58,27 @@ func main() {
 	data := fetchData()
 
 	// save nation images to local
-	downloadNationImages(data.Nationality)
+	// downloadNationImages(data.Nationality)
 
 	// save team images to local
-	downloadTeamsImages(data.Leagues)
+	// downloadTeamsImages(data.Leagues)
 
 	// Save images to s3
-	uploadNationImages()
-	uploadTeamImages()
+	// uploadNationImages()
+	// uploadTeamImages()
 
 	// Rename image paths
 	updateImageNames(data)
 
 	// Insert nations data to mongo
-	insertNationData(data.Nationality)
+	// insertNationData(data.Nationality)
 	// Insert league data to mongo
-	insertLeagueData(data.Leagues)
+	// insertLeagueData(data.Leagues)
 	// Insert team data to mongo
 	insertTeamData(data.Leagues)
 
 	// Save data to file
-	saveDataToFile(data)
+	// saveDataToFile(data)
 
 	fmt.Println("finished")
 }
@@ -240,70 +238,88 @@ func uploadTeamImages() error {
 	return nil
 }
 
-// TODO: Use update many and upsert.
 func insertNationData(nations []Nationality) error {
-	client := mongoClient.CreateClient()
-
-	nationsCollection := client.Database("24").Collection("nations")
-
-	generic := make([]interface{}, 0)
-	for _, f := range nations {
-		generic = append(generic, bson.M{"id": f.Id, "label": f.Label, "imgSrc": f.ImageUrl})
+	type Nation struct {
+		Id     int    `json:"id"`
+		Label  string `json:"label"`
+		ImgSrc string `json:"img_src"`
 	}
 
-	result, err := nationsCollection.InsertMany(context.TODO(), generic)
+	supabase := supa.CreateClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"))
 
-	if err != nil {
-		panic(err)
+	for _, nation := range nations {
+		row := Nation{
+			Id:     nation.Id,
+			Label:  nation.Label,
+			ImgSrc: nation.ImageUrl,
+		}
+		var results []Nationality
+		err := supabase.DB.From("nations").Upsert(row).Execute(&results)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(results)
 	}
-	// display the id of the newly inserted objects
-	fmt.Println(result)
 
 	return nil
 }
 
-// TODO: Use update many and upsert.
 func insertLeagueData(leagues []Leagues) error {
+	type League struct {
+		Id       int    `json:"id"`
+		Label    string `json:"label"`
+		NationId int    `json:"nation_id"`
+	}
 
-	client := mongoClient.CreateClient()
+	supabase := supa.CreateClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"))
 
-	leaguesCollection := client.Database("24").Collection("leagues")
-
-	generic := make([]interface{}, 0)
 	for _, league := range leagues {
-		generic = append(generic, bson.M{"id": league.Id, "label": league.Label, "nationId": league.Region.Id})
+		row := League{
+			Id:       league.Id,
+			Label:    league.Label,
+			NationId: league.Region.Id,
+		}
+		var results []Leagues
+		err := supabase.DB.From("leagues").Upsert(row).Execute(&results)
+		if err != nil {
+			fmt.Println(league)
+			panic(err)
+		}
+		fmt.Println(results)
 	}
-
-	result, err := leaguesCollection.InsertMany(context.TODO(), generic)
-
-	if err != nil {
-		panic(err)
-	}
-	// display the id of the newly inserted objects
-	fmt.Println(result)
 
 	return nil
 }
 
-// TODO: Use update many and upsert.
 func insertTeamData(leagues []Leagues) error {
-	client := mongoClient.CreateClient()
-	clubsCollection := client.Database("24").Collection("clubs")
+	type Team struct {
+		Id       int    `json:"id"`
+		Label    string `json:"label"`
+		ImgSrc   string `json:"img_src"`
+		NationId int    `json:"nation_id"`
+		LeagueId int    `json:"league_id"`
+	}
 
-	teamData := make([]interface{}, 0)
+	supabase := supa.CreateClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"))
+
 	for _, league := range leagues {
 		for _, team := range league.Teams {
-			teamData = append(teamData, bson.M{"id": team.Id, "label": team.Label, "imgSrc": team.ImageUrl, "leagueId": league.Id, "nationId": league.Region.Id})
+			row := Team{
+				Id:       team.Id,
+				Label:    team.Label,
+				ImgSrc:   team.ImageUrl,
+				NationId: league.Region.Id,
+				LeagueId: league.Id,
+			}
+			var results []Team
+			err := supabase.DB.From("clubs").Upsert(row).Execute(&results)
+			if err != nil {
+				fmt.Println(league)
+				panic(err)
+			}
+			fmt.Println(results)
 		}
+
 	}
-
-	result, err := clubsCollection.InsertMany(context.TODO(), teamData)
-
-	if err != nil {
-		panic(err)
-	}
-	// display the id of the newly inserted objects
-	fmt.Println(result)
-
 	return nil
 }
