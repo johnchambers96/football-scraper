@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/joho/godotenv"
 	supa "github.com/nedpals/supabase-go"
@@ -58,27 +59,27 @@ func main() {
 	data := fetchData()
 
 	// save nation images to local
-	// downloadNationImages(data.Nationality)
+	downloadNationImages(data.Nationality)
 
 	// save team images to local
-	// downloadTeamsImages(data.Leagues)
+	downloadTeamsImages(data.Leagues)
 
 	// Save images to s3
 	// uploadNationImages()
-	// uploadTeamImages()
+	uploadTeamImages()
 
 	// Rename image paths
 	updateImageNames(data)
 
 	// Insert nations data to mongo
-	// insertNationData(data.Nationality)
+	insertNationData(data.Nationality)
 	// Insert league data to mongo
-	// insertLeagueData(data.Leagues)
+	insertLeagueData(data.Leagues)
 	// Insert team data to mongo
 	insertTeamData(data.Leagues)
 
 	// Save data to file
-	// saveDataToFile(data)
+	saveDataToFile(data)
 
 	fmt.Println("finished")
 }
@@ -156,12 +157,11 @@ func downloadNationImages(nations []Nationality) error {
 
 func downloadTeamsImages(leagues []Leagues) error {
 
-	// Create a channel to track status of image upload
-	status := make(chan error)
+	var wg sync.WaitGroup
 
 	for i := range leagues {
 		for v := range leagues[i].Teams {
-
+			wg.Add(1)
 			go func(team Teams) error {
 				err := downloadFile.DownloadFile("../../assets/teams/"+strconv.Itoa(team.Id)+".png", team.ImageUrl)
 
@@ -170,7 +170,7 @@ func downloadTeamsImages(leagues []Leagues) error {
 					return nil
 				}
 
-				status <- err
+				defer wg.Done()
 
 				return nil
 
@@ -178,14 +178,7 @@ func downloadTeamsImages(leagues []Leagues) error {
 		}
 	}
 
-	// Wait for all uploads to complete and collect status
-	for range leagues {
-		err := <-status
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
-	}
+	wg.Wait()
 
 	return nil
 }
