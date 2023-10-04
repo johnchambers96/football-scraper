@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,12 @@ type Player struct {
 	NationId  int      `json:"nationId"`
 	ClubId    int      `json:"clubId"`
 	Positions []string `json:"positions"`
+	Rating    string   `json:"rating"`
+}
+
+type PagesToScrape struct {
+	teamId int
+	url    string
 }
 
 func main() {
@@ -49,6 +56,9 @@ func main() {
 	// Scrape player data from ECFC career mode website
 	players := scrapeAllData(data)
 	// players := getPlayersData()
+
+	// Sort players by rating
+	sortPlayersByRating(players)
 
 	// Download player images
 	downloadPlayerImages(players)
@@ -116,27 +126,32 @@ func getPlayersData() []Player {
 func scrapeAllData(leagues Data) []Player {
 
 	collectedPlayerData := []Player{}
+	collectedPages := []PagesToScrape{}
 
 	for _, league := range leagues.Leagues {
 		for _, team := range league.Teams {
 			fmt.Println(team.Id)
-			time.Sleep(3 * time.Second)
-			playerData := scrapeData(team.Id)
-			fmt.Println("done")
-			collectedPlayerData = append(collectedPlayerData, playerData...)
-
+			time.Sleep(1 * time.Second)
+			page := scrapePlayerUrls(team.Id)
+			fmt.Println(page)
+			collectedPages = append(collectedPages, page...)
 		}
+	}
+
+	fmt.Println(collectedPages)
+
+	for _, page := range collectedPages {
+		time.Sleep(1 * time.Second)
+		playerData := scrapeData(page)
+		fmt.Println(playerData)
+		collectedPlayerData = append(collectedPlayerData, playerData)
 	}
 
 	return collectedPlayerData
 }
 
-func scrapeData(teamId int) []Player {
-	var baseUrl = "https://sofifa.com"
-
-	var playersData []Player
-
-	pageToScrape := baseUrl + "/team/" + strconv.Itoa(teamId)
+func scrapeData(page PagesToScrape) Player {
+	var playerData = Player{}
 
 	c := colly.NewCollector()
 
@@ -152,9 +167,10 @@ func scrapeData(teamId int) []Player {
 		//  // Filter domains affected by this rule
 		DomainGlob: "https://sofifa.com/*",
 		//  // Set a delay between requests to these domains
-		Delay: 1 * time.Second,
+		Delay: 5 * time.Second,
 		//  // Add an additional random delay
-		RandomDelay: 3 * time.Second,
+		RandomDelay: 10 * time.Second,
+		Parallelism: 2,
 	})
 
 	c.UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
@@ -162,25 +178,25 @@ func scrapeData(teamId int) []Player {
 	// Fetch individual player data
 	c.OnHTML("body", func(e *colly.HTMLElement) {
 		if strings.Contains(e.Request.URL.Path, "player") {
-			var playerData = Player{}
+			// var playerData = Player{}
 			var playerPos = []string{}
 
 			playerData.KnownName = e.ChildText(".player .info h1")
 			playerData.ShortName = e.ChildText(".header .ellipsis")
 			playerData.ImageUrl = e.ChildAttr(".player img", "data-src")
-
-			playerData.ClubId = teamId
+			playerData.Rating = e.ChildText(".player .block-quarter:first-of-type .p")
+			playerData.ClubId = page.teamId
 
 			playerId, err := strconv.Atoi(strings.Split(e.Request.URL.Path, "/")[2])
 			if err != nil {
-				panic("test")
+				panic(err)
 			} else {
 				playerData.Id = playerId
 			}
 
 			nationId, err := strconv.Atoi(strings.Split(e.ChildAttr(".info a", "href"), "=")[1])
 			if err != nil {
-				panic("err")
+				panic(err)
 			} else {
 				playerData.NationId = nationId
 			}
@@ -190,22 +206,73 @@ func scrapeData(teamId int) []Player {
 			})
 
 			playerData.Positions = playerPos
-
-			playersData = append(playersData, playerData)
 		}
 	})
+
+	c.OnError(func(r *colly.Response, err error) {
+		fmt.Println("Request URL:", r.Request.URL)
+	})
+
+	c.Visit(page.url)
+
+	c.Wait()
+
+	return playerData
+}
+
+func scrapePlayerUrls(teamId int) []PagesToScrape {
+	var baseUrl = "https://sofifa.com"
+
+	var pagesToScrape = []PagesToScrape{}
+
+	pageToScrape := baseUrl + "/team/" + strconv.Itoa(teamId)
+
+	c := colly.NewCollector(
+		// colly.Debugger(&debug.LogDebugger{}),
+		colly.Async(true),
+	)
+
+	//Ignore the robot.txt
+	c.IgnoreRobotsTxt = true
+	// Time-out after 20 seconds.
+	c.SetRequestTimeout(120 * time.Second)
+	//use random agents during requests
+	extensions.RandomUserAgent(c)
+
+	//set limits to colly opoeration
+	c.Limit(&colly.LimitRule{
+		//  // Filter domains affected by this rule
+		DomainGlob: "https://sofifa.com/*",
+		//  // Set a delay between requests to these domains
+		Delay: 5 * time.Second,
+		//  // Add an additional random delay
+		RandomDelay: 10 * time.Second,
+		Parallelism: 1,
+	})
+
+	c.UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
 
 	// Get player urls of squad players
 	c.OnHTML(".card:nth-of-type(2) .list tr", func(e *colly.HTMLElement) {
 		href := e.ChildAttr(".col-name a", "href")
-		c.Visit(baseUrl + href + "?hl=en-US")
+
+		var page = PagesToScrape{
+			teamId: teamId,
+			url:    baseUrl + href + "?hl=en-US",
+		}
+
+		pagesToScrape = append(pagesToScrape, page)
+	})
+
+	c.OnError(func(r *colly.Response, err error) {
+		fmt.Println("Request URL:", r.Request.URL)
 	})
 
 	c.Visit(pageToScrape)
 
 	c.Wait()
 
-	return playersData
+	return pagesToScrape
 }
 
 func downloadPlayerImages(players []Player) error {
@@ -249,6 +316,7 @@ func insertPlayerData(players []Player) error {
 		ShortName string   `json:"short_name"`
 		KnownName string   `json:"known_name"`
 		Positions []string `json:"positions"`
+		ImgSrc    string   `json:"img_src"`
 	}
 
 	supabase := supa.CreateClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"))
@@ -261,6 +329,7 @@ func insertPlayerData(players []Player) error {
 			ShortName: player.ShortName,
 			KnownName: player.KnownName,
 			Positions: player.Positions,
+			ImgSrc:    player.ImageUrl,
 		}
 		var results []PlayerSupa
 		err := supabase.DB.From("players").Upsert(row).Execute(&results)
@@ -271,4 +340,23 @@ func insertPlayerData(players []Player) error {
 	}
 
 	return nil
+}
+
+func sortPlayersByRating(players []Player) []Player {
+	sort.Slice(players, func(i, j int) bool {
+		iVal, iErr := strconv.Atoi(players[i].Rating)
+		jVal, jErr := strconv.Atoi(players[j].Rating)
+
+		if iErr != nil {
+			panic(iErr)
+		}
+
+		if jErr != nil {
+			panic(jErr)
+		}
+
+		return iVal > jVal
+	})
+
+	return players
 }
