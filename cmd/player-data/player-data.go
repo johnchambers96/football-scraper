@@ -41,6 +41,7 @@ type Player struct {
 	ClubId    int      `json:"clubId"`
 	Positions []string `json:"positions"`
 	Rating    string   `json:"rating"`
+	KitNumber int      `json:"kitNumber"`
 }
 
 type PagesToScrape struct {
@@ -70,7 +71,6 @@ func main() {
 	updatePlayerData(players)
 	// Update/insert player data to mongodb
 	insertPlayerData(players)
-
 	saveDataToFile(players)
 	fmt.Println("Player data finished.")
 }
@@ -130,7 +130,6 @@ func scrapeAllData(leagues Data) []Player {
 
 	for _, league := range leagues.Leagues {
 		for _, team := range league.Teams {
-			fmt.Println(team.Id)
 			time.Sleep(1 * time.Second)
 			page := scrapePlayerUrls(team.Id)
 			fmt.Println(page)
@@ -138,12 +137,9 @@ func scrapeAllData(leagues Data) []Player {
 		}
 	}
 
-	fmt.Println(collectedPages)
-
 	for _, page := range collectedPages {
 		time.Sleep(1 * time.Second)
 		playerData := scrapeData(page)
-		fmt.Println(playerData)
 		collectedPlayerData = append(collectedPlayerData, playerData)
 	}
 
@@ -178,14 +174,24 @@ func scrapeData(page PagesToScrape) Player {
 	// Fetch individual player data
 	c.OnHTML("body", func(e *colly.HTMLElement) {
 		if strings.Contains(e.Request.URL.Path, "player") {
-			// var playerData = Player{}
 			var playerPos = []string{}
 
-			playerData.KnownName = e.ChildText(".player .info h1")
-			playerData.ShortName = e.ChildText(".header .ellipsis")
-			playerData.ImageUrl = e.ChildAttr(".player img", "data-src")
-			playerData.Rating = e.ChildText(".player .block-quarter:first-of-type .p")
+			playerData.KnownName = e.ChildText(".profile h1")
+			playerData.ShortName = e.ChildText("section .ellipsis")
+			playerData.ImageUrl = e.ChildAttr(".profile img", "data-src")
+			playerData.Rating = e.ChildAttr("article .grid .col:first-of-type em", "title")
 			playerData.ClubId = page.teamId
+
+			e.ForEach(".grid.attribute .col:nth-child(3) p:nth-child(6)", func(_ int, e *colly.HTMLElement) {
+				if strings.Contains(e.Text, "Kit number") {
+					kitNum, err := strconv.Atoi(strings.Split(e.Text, "Kit number ")[1])
+					if err != nil {
+						panic(err)
+					} else {
+						playerData.KitNumber = kitNum
+					}
+				}
+			})
 
 			playerId, err := strconv.Atoi(strings.Split(e.Request.URL.Path, "/")[2])
 			if err != nil {
@@ -194,14 +200,14 @@ func scrapeData(page PagesToScrape) Player {
 				playerData.Id = playerId
 			}
 
-			nationId, err := strconv.Atoi(strings.Split(e.ChildAttr(".info a", "href"), "=")[1])
+			nationId, err := strconv.Atoi(strings.Split(e.ChildAttr(".profile a", "href"), "=")[1])
 			if err != nil {
 				panic(err)
 			} else {
 				playerData.NationId = nationId
 			}
 
-			e.ForEach(".info .pos", func(_ int, e *colly.HTMLElement) {
+			e.ForEach(".profile .pos", func(_ int, e *colly.HTMLElement) {
 				playerPos = append(playerPos, e.DOM.Text())
 			})
 
@@ -216,6 +222,8 @@ func scrapeData(page PagesToScrape) Player {
 	c.Visit(page.url)
 
 	c.Wait()
+
+	fmt.Println(playerData.KnownName)
 
 	return playerData
 }
@@ -241,11 +249,11 @@ func scrapePlayerUrls(teamId int) []PagesToScrape {
 
 	//set limits to colly opoeration
 	c.Limit(&colly.LimitRule{
-		//  // Filter domains affected by this rule
+		//  Filter domains affected by this rule
 		DomainGlob: "https://sofifa.com/*",
-		//  // Set a delay between requests to these domains
+		//  Set a delay between requests to these domains
 		Delay: 5 * time.Second,
-		//  // Add an additional random delay
+		//  Add an additional random delay
 		RandomDelay: 10 * time.Second,
 		Parallelism: 1,
 	})
@@ -253,8 +261,8 @@ func scrapePlayerUrls(teamId int) []PagesToScrape {
 	c.UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
 
 	// Get player urls of squad players
-	c.OnHTML(".card:nth-of-type(2) .list tr", func(e *colly.HTMLElement) {
-		href := e.ChildAttr(".col-name a", "href")
+	c.OnHTML("tr.starting, tr.sub, tr.res", func(e *colly.HTMLElement) {
+		href := e.ChildAttr("td:nth-child(2) a:first-child", "href")
 
 		var page = PagesToScrape{
 			teamId: teamId,
@@ -317,11 +325,20 @@ func insertPlayerData(players []Player) error {
 		KnownName string   `json:"known_name"`
 		Positions []string `json:"positions"`
 		ImgSrc    string   `json:"img_src"`
+		Rating    int      `json:"rating"`
+		KitNumber int      `json:"kit_number"`
 	}
 
 	supabase := supa.CreateClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"))
 
 	for _, player := range players {
+
+		rating, err := strconv.Atoi(player.Rating)
+
+		if err != nil {
+			panic(err)
+		}
+
 		row := PlayerSupa{
 			Id:        player.Id,
 			ClubId:    player.ClubId,
@@ -330,9 +347,11 @@ func insertPlayerData(players []Player) error {
 			KnownName: player.KnownName,
 			Positions: player.Positions,
 			ImgSrc:    player.ImageUrl,
+			Rating:    rating,
+			KitNumber: player.KitNumber,
 		}
 		var results []PlayerSupa
-		err := supabase.DB.From("players").Upsert(row).Execute(&results)
+		err = supabase.DB.From("players").Upsert(row).Execute(&results)
 		if err != nil {
 			panic(err)
 		}
