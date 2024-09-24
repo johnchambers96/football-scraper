@@ -34,12 +34,12 @@ type Teams struct {
 }
 
 type Region struct {
-	Id    int    `json:"id"`
+	Id    string `json:"id"`
 	Label string `json:"label"`
 }
 
 type Leagues struct {
-	Id     int     `json:"id"`
+	Id     string  `json:"id"`
 	Label  string  `json:"label"`
 	Region Region  `json:"region"`
 	Gender Gender  `json:"gender"`
@@ -49,13 +49,12 @@ type Leagues struct {
 type LeagueNationData struct {
 	Gender      []Gender      `json:"gender"`
 	Nationality []Nationality `json:"nationality"`
-	Leagues     []Leagues     `json:"leagues"`
+	Leagues     []Leagues     `json:"teamGroups"`
 }
 
 func main() {
 	godotenv.Load("../../.env")
-
-	// Fetch data from EAFCp
+	// Fetch data from EAFC
 	data := fetchData()
 
 	// save nation images to local
@@ -65,7 +64,7 @@ func main() {
 	downloadTeamsImages(data.Leagues)
 
 	// Save images to s3
-	// uploadNationImages()
+	uploadNationImages()
 	uploadTeamImages()
 
 	// Rename image paths
@@ -187,13 +186,13 @@ func updateImageNames(data LeagueNationData) LeagueNationData {
 
 	// Update nation data to use correct url
 	for i := range data.Nationality {
-		data.Nationality[i].ImageUrl = "https://cdn.lineup-builder.co.uk/nations/24/" + strconv.Itoa(data.Nationality[i].Id) + ".png"
+		data.Nationality[i].ImageUrl = "https://cdn.lineup-builder.co.uk/nations/25/" + strconv.Itoa(data.Nationality[i].Id) + ".png"
 	}
 
 	// Update team data to use correct url
 	for i := range data.Leagues {
 		for v := range data.Leagues[i].Teams {
-			data.Leagues[i].Teams[v].ImageUrl = "https://cdn.lineup-builder.co.uk/clubs/24/" + strconv.Itoa(data.Leagues[i].Teams[v].Id) + ".png"
+			data.Leagues[i].Teams[v].ImageUrl = "https://cdn.lineup-builder.co.uk/clubs/25/" + strconv.Itoa(data.Leagues[i].Teams[v].Id) + ".png"
 		}
 	}
 
@@ -211,7 +210,7 @@ func uploadNationImages() error {
 		filePaths = append(filePaths, "../../assets/nations/"+file.Name())
 	}
 
-	s3.UploadImagesToS3(os.Getenv("BUCKET_NAME"), filePaths, "nations/24/")
+	s3.UploadImagesToS3(os.Getenv("BUCKET_NAME"), filePaths, "nations/25/")
 	return nil
 }
 
@@ -226,7 +225,7 @@ func uploadTeamImages() error {
 		filePaths = append(filePaths, "../../assets/teams/"+file.Name())
 	}
 
-	s3.UploadImagesToS3(os.Getenv("BUCKET_NAME"), filePaths, "clubs/24/")
+	s3.UploadImagesToS3(os.Getenv("BUCKET_NAME"), filePaths, "clubs/25/")
 
 	return nil
 }
@@ -247,7 +246,7 @@ func insertNationData(nations []Nationality) error {
 			ImgSrc: nation.ImageUrl,
 		}
 		var results []Nationality
-		err := supabase.DB.From("nations").Upsert(row).Execute(&results)
+		err := supabase.DB.From("nations_2025").Upsert(row).Execute(&results)
 		if err != nil {
 			panic(err)
 		}
@@ -259,7 +258,7 @@ func insertNationData(nations []Nationality) error {
 
 func insertLeagueData(leagues []Leagues) error {
 	type League struct {
-		Id       int    `json:"id"`
+		Id       string `json:"id"`
 		Label    string `json:"label"`
 		NationId int    `json:"nation_id"`
 	}
@@ -267,18 +266,28 @@ func insertLeagueData(leagues []Leagues) error {
 	supabase := supa.CreateClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"))
 
 	for _, league := range leagues {
+		id, err := strconv.Atoi(league.Region.Id)
+		if err != nil {
+			log.Printf("Error converting Region.Id to int for league %s: %v", league.Id, err)
+			continue
+		}
+
+		fmt.Println(league.Id)
+
 		row := League{
 			Id:       league.Id,
 			Label:    league.Label,
-			NationId: league.Region.Id,
+			NationId: id,
 		}
+
 		var results []Leagues
-		err := supabase.DB.From("leagues").Upsert(row).Execute(&results)
+		err = supabase.DB.From("leagues_2025").Upsert(row).Execute(&results)
 		if err != nil {
-			fmt.Println(league)
-			panic(err)
+			log.Printf("Error upserting data for league %s: %v", league.Id, err)
+			continue
 		}
-		fmt.Println(results)
+
+		fmt.Printf("Successfully upserted data for league %s: %v\n", league.Id, results)
 	}
 
 	return nil
@@ -296,18 +305,31 @@ func insertTeamData(leagues []Leagues) error {
 	supabase := supa.CreateClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_KEY"))
 
 	for _, league := range leagues {
+		regionId, err := strconv.Atoi(league.Region.Id)
+		if err != nil {
+			log.Printf("Error converting Region.Id to int for league %s: %v", league.Id, err)
+			continue
+		}
+
+		id, err := strconv.Atoi(league.Id)
+		if err != nil {
+			log.Printf("Error converting League.Id to int for league %s: %v", league.Id, err)
+			continue
+		}
+
 		for _, team := range league.Teams {
+
 			row := Team{
 				Id:       team.Id,
 				Label:    team.Label,
 				ImgSrc:   team.ImageUrl,
-				NationId: league.Region.Id,
-				LeagueId: league.Id,
+				NationId: regionId,
+				LeagueId: id,
 			}
 			var results []Team
-			err := supabase.DB.From("clubs").Upsert(row).Execute(&results)
+			err = supabase.DB.From("clubs_25").Upsert(row).Execute(&results)
 			if err != nil {
-				fmt.Println(league)
+				fmt.Println(league.Id)
 				panic(err)
 			}
 			fmt.Println(results)
